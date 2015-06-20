@@ -1,0 +1,3 @@
+<div>
+  This plugin allows to keep the first failing build of a job. After the build is green (blue) again the failing build may be removed.
+</div>
