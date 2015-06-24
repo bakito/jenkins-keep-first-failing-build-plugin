@@ -1,35 +1,36 @@
 package ch.bakito.jenkins.plugin.kffb;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.ObjectStreamException;
+
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.StaplerRequest;
+
+import com.google.common.io.Files;
+
 import hudson.Extension;
 import hudson.Launcher;
-import hudson.model.BuildListener;
-import hudson.model.Result;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
+import hudson.model.BuildListener;
+import hudson.model.Result;
 import hudson.model.Run;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Publisher;
 import hudson.tasks.Recorder;
-
-import java.io.IOException;
-import java.io.ObjectStreamException;
-
 import net.sf.json.JSONObject;
-
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.StaplerRequest;
 
 /**
  * KeepFirstFailingBuildPublisher
  */
 public class KeepFirstFailingBuildPublisher extends Recorder {
 
-  private static final String DESCRIPTION_TAG = "<!-- first failing build --> ";
+  private static final String FIRST_FAILED_BUILD = "FIRST_FAILED_BUILD";
 
   /**
    * Constructor.
-   *
    */
   @DataBoundConstructor
   public KeepFirstFailingBuildPublisher() {
@@ -44,37 +45,44 @@ public class KeepFirstFailingBuildPublisher extends Recorder {
   }
 
   /**
-   * @see hudson.tasks.BuildStepCompatibilityLayer#perform(hudson.model.AbstractBuild,
-   *      hudson.Launcher, hudson.model.BuildListener)
+   * @param build
+   * @param launcher
+   * @param listener
+   * @return
+   * @throws InterruptedException
    */
   @Override
-  public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener)
-      throws InterruptedException {
+  public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) throws InterruptedException {
     Run<?, ?> prev = build.getPreviousBuild();
     try {
-      if (build.getResult().isWorseThan(Result.SUCCESS)
-          && (prev == null || prev.getResult().isBetterOrEqualTo(Result.SUCCESS))) {
+      if (build.getResult().isWorseThan(Result.SUCCESS) && (prev == null || prev.getResult().isBetterOrEqualTo(Result.SUCCESS))) {
         build.keepLog(true);
-        build.setDescription(DESCRIPTION_TAG + Messages.First_FailedBuild_Description());
+        Files.touch(getMarkerFile(build));
+
         checkHierarchy(build);
       }
       if (build.getResult().isBetterOrEqualTo(Result.SUCCESS)) {
         checkHierarchy(build);
       }
     } catch (IOException e) {
-      e.printStackTrace(listener.error("error while procesing build logs"));
+      e.printStackTrace(listener.error("error while processing build logs"));
     }
     return true;
   }
 
-  private void checkHierarchy(Run<?, ?> build) throws IOException {
-    Run<?, ?> prev = build;
+  private void checkHierarchy(Run<?, ?> run) throws IOException {
+    Run<?, ?> prev = run;
     while ((prev = prev.getPreviousBuild()) != null) {
-      if (prev.isKeepLog() && prev.getDescription() != null && prev.getDescription().startsWith(DESCRIPTION_TAG)) {
+      File marker = getMarkerFile(prev);
+      if (prev.isKeepLog() && marker.exists()) {
         prev.keepLog(false);
-        prev.setDescription(null);
+        marker.delete();
       }
     }
+  }
+
+  static File getMarkerFile(Run<?, ?> run) {
+    return new File(run.getRootDir(), KeepFirstFailingBuildPublisher.class.getSimpleName() + ".firstFailed");
   }
 
   private Object readResolve() throws ObjectStreamException {
@@ -91,7 +99,6 @@ public class KeepFirstFailingBuildPublisher extends Recorder {
 
     /**
      * Constructor.
-     *
      */
     public DescriptorImpl() {
       super(KeepFirstFailingBuildPublisher.class);
